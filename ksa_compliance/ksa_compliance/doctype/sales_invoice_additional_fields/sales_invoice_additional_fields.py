@@ -683,7 +683,7 @@ def check_pdf_a3b_support(id: str):
 @frappe.whitelist()
 def download_zatca_pdf(id: str, print_format: str = 'ZATCA Phase 2 Print Format', lang: str = 'en'):
     siaf = cast(SalesInvoiceAdditionalFields, frappe.get_doc('Sales Invoice Additional Fields', id))
-    sales_invoice_doc = cast(SalesInvoice, frappe.get_doc('Sales Invoice', siaf.sales_invoice))
+    invoice_doc = frappe.get_doc(siaf.invoice_doctype, siaf.sales_invoice)
     settings = ZATCABusinessSettings.for_invoice(siaf.sales_invoice, siaf.invoice_doctype)
     xml_content = siaf.get_signed_xml()
     pdf_writer = PdfWriter()
@@ -696,10 +696,10 @@ def download_zatca_pdf(id: str, print_format: str = 'ZATCA Phase 2 Print Format'
     )
     with print_language(lang):
         frappe.get_print(
-            'Sales Invoice',
+            siaf.invoice_doctype,
             siaf.sales_invoice,
             print_format,
-            doc=sales_invoice_doc,
+            doc=invoice_doc,
             as_pdf=True,
             output=pdf_writer,
         )

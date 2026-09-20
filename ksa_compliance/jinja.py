@@ -9,6 +9,7 @@ import pyqrcode
 from semantic_version import Version
 
 import frappe
+from erpnext.accounts.doctype.payment_entry.payment_entry import PaymentEntry
 from erpnext.accounts.doctype.pos_invoice.pos_invoice import POSInvoice
 from erpnext.accounts.doctype.sales_invoice.sales_invoice import SalesInvoice
 from erpnext.setup.doctype.branch.branch import Branch
@@ -133,7 +134,7 @@ def _generate_qrcode(data: str) -> str | None:
         return img_str
 
 
-def get_phase_2_print_format_details(sales_invoice: SalesInvoice | POSInvoice) -> dict | None:
+def get_phase_2_print_format_details(sales_invoice: SalesInvoice | POSInvoice | PaymentEntry) -> dict | None:
     settings_id = frappe.db.exists(
         'ZATCA Business Settings', {'company': sales_invoice.company, 'enable_zatca_integration': True}
     )
@@ -149,7 +150,8 @@ def get_phase_2_print_format_details(sales_invoice: SalesInvoice | POSInvoice) -
             if branch_doc.custom_company_address:
                 has_branch_address = True
     seller_other_id, seller_other_id_name = _get_seller_other_id(sales_invoice, settings)
-    buyer_other_id, buyer_other_id_name = _get_buyer_other_id(sales_invoice.customer)
+    customer_name = sales_invoice.party if sales_invoice.doctype == 'Payment Entry' else sales_invoice.customer
+    buyer_other_id, buyer_other_id_name = _get_buyer_other_id(customer_name)
     siaf = frappe.get_last_doc('Sales Invoice Additional Fields', {'sales_invoice': sales_invoice.name})
     return {
         'settings': settings,

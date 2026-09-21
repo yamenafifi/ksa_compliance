@@ -275,5 +275,6 @@ def make_prepayment_credit_note_doc(source_name: str) -> str:
             'cost_center': tax.cost_center,
         })
 
+    new_pe.flags.ignore_validate = True
     new_pe.insert(ignore_permissions=True)
     return new_pe.name

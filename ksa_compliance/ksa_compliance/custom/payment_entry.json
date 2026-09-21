@@ -371,7 +371,7 @@
    "is_virtual": 0,
    "label": "Original Prepayment Invoice",
    "length": 0,
-   "link_filters": "[[\\\"Payment Entry\\\", \\\"custom_prepayment_invoice\\\", \\\"=\\\", 1], [\\\"Payment Entry\\\", \\\"docstatus\\\", \\\"=\\\", 1]]",
+   "link_filters": null,
    "mandatory_depends_on": "eval:doc.custom_prepayment_invoice && doc.custom_is_prepayment_credit_note",
    "modified": "2026-09-21 12:00:00.000000",
    "modified_by": "Administrator",

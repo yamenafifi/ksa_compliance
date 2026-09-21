@@ -384,33 +384,56 @@ class SalesInvoiceAdditionalFields(Document):
         self.buyer_vat_registration_number = customer.get('custom_vat_registration_number')
         _is_b2b_customer = invoice_type == 'Standard'
 
-        if invoice.doctype == 'Payment Entry':
-            # Payment Entry: retain existing Customer-master address lookup
-            if customer.customer_primary_address:
-                address_name = customer.customer_primary_address
-            else:
-                address = frappe.db.get_all(
-                    'Dynamic Link',
-                    {
-                        'parenttype': 'Address',
-                        'parentfield': 'links',
-                        'link_doctype': 'Customer',
-                        'link_name': customer.name,
-                    },
-                    pluck='parent',
-                )
-                if address:
-                    address_name = address[0]
+        address_name = None
 
-            if not address_name and _is_b2b_customer:
-                customer_form = frappe.utils.get_link_to_form('Customer', customer.name)
-                fthrow(
-                    ft(
-                        'Customer address is mandatory for B2B transactions; Please set a customer address for B2B customer $customer.',
-                        customer=customer_form,
-                    ),
-                    title=ft('Address Not Found Error'),
-                )
+        if invoice.doctype == 'Payment Entry':
+            # A prepayment is billed to the address on the Sales Order it is linked with (a credit note: the one of
+            # the prepayment it reverses) - the same rule as a Sales Invoice, whose address comes from the invoice
+            # itself and not from whatever the customer master happens to hold.
+            linked_documents = _get_prepayment_linked_documents(invoice)
+            if linked_documents:
+                for linked_doctype, linked_name in linked_documents:
+                    address_name = frappe.db.get_value(linked_doctype, linked_name, 'customer_address')
+                    if address_name:
+                        break
+
+                if not address_name and _is_b2b_customer:
+                    linked_form = frappe.utils.get_link_to_form(*linked_documents[0])
+                    fthrow(
+                        ft(
+                            'Billing address is mandatory for B2B transactions; Please set the Billing Address on '
+                            '$order, the order this prepayment is linked with.',
+                            order=linked_form,
+                        ),
+                        title=ft('Address Not Found Error'),
+                    )
+            else:
+                # Not linked with any order (a free-hand prepayment): the only address there is, is the customer's
+                if customer.customer_primary_address:
+                    address_name = customer.customer_primary_address
+                else:
+                    address = frappe.db.get_all(
+                        'Dynamic Link',
+                        {
+                            'parenttype': 'Address',
+                            'parentfield': 'links',
+                            'link_doctype': 'Customer',
+                            'link_name': customer.name,
+                        },
+                        pluck='parent',
+                    )
+                    if address:
+                        address_name = address[0]
+
+                if not address_name and _is_b2b_customer:
+                    customer_form = frappe.utils.get_link_to_form('Customer', customer.name)
+                    fthrow(
+                        ft(
+                            'Customer address is mandatory for B2B transactions; Please set a customer address for B2B customer $customer.',
+                            customer=customer_form,
+                        ),
+                        title=ft('Address Not Found Error'),
+                    )
         else:
             # Sales Invoice / POS Invoice: always use the billing address set on the invoice
             address_name = invoice.get('customer_address')
@@ -616,6 +639,30 @@ class SalesInvoiceAdditionalFields(Document):
                 msg=message,
                 title=_('Invalid Address Error'),
             )
+
+
+def _get_prepayment_linked_documents(payment_entry: PaymentEntry, _followed_original: bool = False) -> list[tuple[str, str]]:
+    """The Sales Orders a prepayment is linked with, as (doctype, name) pairs, Sales Orders first.
+
+    Once a Sales Invoice has applied the prepayment ERPNext re-points its reference from the order to that invoice,
+    so a Sales Invoice counts too - it carries the same billing address. A credit note has no references of its own:
+    it follows the prepayment it reverses.
+    """
+    documents = [
+        (row.reference_doctype, row.reference_name)
+        for row in payment_entry.get('references') or []
+        if row.reference_doctype in ('Sales Order', 'Sales Invoice') and row.reference_name
+    ]
+    documents.sort(key=lambda document: document[0] != 'Sales Order')
+    if (
+        not documents
+        and not _followed_original
+        and payment_entry.get('custom_is_prepayment_credit_note')
+        and payment_entry.get('custom_original_prepayment_invoice')
+    ):
+        original = frappe.get_doc('Payment Entry', payment_entry.custom_original_prepayment_invoice)
+        return _get_prepayment_linked_documents(original, _followed_original=True)
+    return documents
 
 
 @frappe.whitelist()

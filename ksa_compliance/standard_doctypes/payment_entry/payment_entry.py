@@ -116,10 +116,26 @@ def _validate_prepayment_credit_note(self: PaymentEntry) -> None:
         )
 
 
+def _mark_credit_note_statuses(self: PaymentEntry) -> None:
+    """If this is a prepayment credit note, mark the original prepayment invoice as Refunded and the credit note itself
+    as Credit Note.
+
+    Deliberately not part of the ZATCA path below: these statuses record what happened to the money, which is true
+    whether or not ZATCA integration is enabled (or even configured) for the company, so they must never be skipped
+    by the early returns that follow.
+    """
+    if self.custom_is_prepayment_credit_note and self.custom_original_prepayment_invoice:
+        frappe.db.set_value('Payment Entry', self.custom_original_prepayment_invoice, 'status', 'Refunded')
+        frappe.db.set_value('Payment Entry', self.name, 'status', 'Credit Note')
+        logger.info(f'Marked original prepayment invoice {self.custom_original_prepayment_invoice} as Refunded')
+
+
 def create_prepayment_invoice_additional_fields_doctype(self: PaymentEntry, method: str = None):
     if not self.custom_prepayment_invoice:
         logger.info(f"Skipping additional fields for {self.name} because it's not a prepayment invoice")
         return
+
+    _mark_credit_note_statuses(self)
 
     settings = ZATCABusinessSettings.for_invoice(self.name, self.doctype)
     if not settings:
@@ -177,13 +193,6 @@ def create_prepayment_invoice_additional_fields_doctype(self: PaymentEntry, meth
     # Also persist the invoice number in the display field
     frappe.db.set_value('Payment Entry', self.name, 'custom_prepayment_invoice_number', invoice_number)
     self.custom_prepayment_invoice_number = invoice_number
-
-    # If this is a credit note, mark the original prepayment invoice as Refunded
-    # and mark the credit note itself as Credit Note
-    if self.custom_is_prepayment_credit_note and self.custom_original_prepayment_invoice:
-        frappe.db.set_value('Payment Entry', self.custom_original_prepayment_invoice, 'status', 'Refunded')
-        frappe.db.set_value('Payment Entry', self.name, 'status', 'Credit Note')
-        logger.info(f'Marked original prepayment invoice {self.custom_original_prepayment_invoice} as Refunded')
 
     prepayment_additional_fields_doc = SalesInvoiceAdditionalFields.create_for_invoice(self.name, self.doctype)
     is_live_sync = settings.is_live_sync

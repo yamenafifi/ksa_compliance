@@ -19,6 +19,11 @@ def validate_payment_entry(self: PaymentEntry, method: str = None):
     if not self.custom_prepayment_invoice:
         return
 
+    # Keep original status as Refunded if a credit note exists (protects against ERPNext set_status reverting it on save)
+    if self.docstatus == 1 and not self.custom_is_prepayment_credit_note:
+        if frappe.db.exists('Payment Entry', {'custom_original_prepayment_invoice': self.name, 'docstatus': 1}):
+            self.status = 'Refunded'
+
     # Force the tax to be Deduct and not included_in_paid_amount
     if self.taxes:
         for row in self.get('taxes'):
@@ -165,9 +170,14 @@ def create_prepayment_invoice_additional_fields_doctype(self: PaymentEntry, meth
         # PE was already renamed in a previous commit — just continue
         logger.info(f'Payment Entry already named {invoice_number}, skipping rename')
 
-    # Persist the invoice number in the display field
+    # Also persist the invoice number in the display field
     frappe.db.set_value('Payment Entry', self.name, 'custom_prepayment_invoice_number', invoice_number)
     self.custom_prepayment_invoice_number = invoice_number
+
+    # If this is a credit note, mark the original prepayment invoice as Refunded
+    if self.custom_is_prepayment_credit_note and self.custom_original_prepayment_invoice:
+        frappe.db.set_value('Payment Entry', self.custom_original_prepayment_invoice, 'status', 'Refunded')
+        logger.info(f'Marked original prepayment invoice {self.custom_original_prepayment_invoice} as Refunded')
 
     prepayment_additional_fields_doc = SalesInvoiceAdditionalFields.create_for_invoice(self.name, self.doctype)
     is_live_sync = settings.is_live_sync

@@ -24,6 +24,10 @@ def validate_payment_entry(self: PaymentEntry, method: str = None):
         if frappe.db.exists('Payment Entry', {'custom_original_prepayment_invoice': self.name, 'docstatus': 1}):
             self.status = 'Refunded'
 
+    # Set status to Credit Note if this is a credit note
+    if self.docstatus == 1 and self.custom_is_prepayment_credit_note:
+        self.status = 'Credit Note'
+
     # Force the tax to be Deduct and not included_in_paid_amount
     if self.taxes:
         for row in self.get('taxes'):
@@ -175,8 +179,10 @@ def create_prepayment_invoice_additional_fields_doctype(self: PaymentEntry, meth
     self.custom_prepayment_invoice_number = invoice_number
 
     # If this is a credit note, mark the original prepayment invoice as Refunded
+    # and mark the credit note itself as Credit Note
     if self.custom_is_prepayment_credit_note and self.custom_original_prepayment_invoice:
         frappe.db.set_value('Payment Entry', self.custom_original_prepayment_invoice, 'status', 'Refunded')
+        frappe.db.set_value('Payment Entry', self.name, 'status', 'Credit Note')
         logger.info(f'Marked original prepayment invoice {self.custom_original_prepayment_invoice} as Refunded')
 
     prepayment_additional_fields_doc = SalesInvoiceAdditionalFields.create_for_invoice(self.name, self.doctype)

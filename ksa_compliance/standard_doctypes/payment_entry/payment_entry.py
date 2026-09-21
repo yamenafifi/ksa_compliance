@@ -203,3 +203,77 @@ def prevent_cancellation_of_prepayment_invoice(self: PaymentEntry, method):
             title=_('This Action Is Not Allowed'),
         )
 
+
+@frappe.whitelist()
+def make_prepayment_credit_note_doc(source_name: str) -> str:
+    """Create a draft credit note Payment Entry against a submitted prepayment invoice.
+
+    Returns the name of the new draft document so the client can route to it.
+    All fields are populated server-side to avoid NaN from missing form handlers.
+    """
+    original: PaymentEntry = frappe.get_doc('Payment Entry', source_name)
+
+    if not original.custom_prepayment_invoice:
+        frappe.throw(_('The selected Payment Entry is not a prepayment invoice.'))
+    if original.docstatus != 1:
+        frappe.throw(_('The original prepayment invoice must be submitted before a credit note can be created.'))
+
+    existing = frappe.db.exists(
+        'Payment Entry',
+        {'custom_original_prepayment_invoice': source_name, 'docstatus': ['!=', 2]},
+    )
+    if existing:
+        frappe.throw(
+            _('A credit note {0} already exists for this prepayment invoice.').format(frappe.bold(existing))
+        )
+
+    new_pe: PaymentEntry = frappe.new_doc('Payment Entry')
+    new_pe.payment_type = 'Pay'
+    new_pe.company = original.company
+    new_pe.mode_of_payment = original.mode_of_payment
+    new_pe.party_type = original.party_type
+    new_pe.party = original.party
+    new_pe.party_name = original.party_name
+
+    # Reverse the flow of funds — money goes back to the customer
+    new_pe.paid_from = original.paid_to
+    new_pe.paid_from_account_type = original.paid_to_account_type
+    new_pe.paid_from_account_currency = original.paid_to_account_currency
+    new_pe.paid_to = original.paid_from
+    new_pe.paid_to_account_type = original.paid_from_account_type
+    new_pe.paid_to_account_currency = original.paid_from_account_currency
+
+    new_pe.paid_amount = original.paid_amount
+    new_pe.received_amount = original.received_amount
+    new_pe.source_exchange_rate = original.source_exchange_rate or 1
+    new_pe.target_exchange_rate = original.target_exchange_rate or 1
+    new_pe.base_paid_amount = original.base_paid_amount
+    new_pe.base_received_amount = original.base_received_amount
+
+    # Use the human-readable invoice number if available (post-rename PEs),
+    # otherwise fall back to the raw document name (legacy PEs)
+    invoice_ref = original.custom_prepayment_invoice_number or original.name
+
+    new_pe.custom_prepayment_invoice = 1
+    new_pe.custom_is_prepayment_credit_note = 1
+    new_pe.custom_original_prepayment_invoice = source_name
+    new_pe.custom_prepayment_invoice_description = f'Credit Note for {invoice_ref}'
+    new_pe.sales_taxes_and_charges_template = original.sales_taxes_and_charges_template
+    new_pe.posting_date = frappe.utils.today()
+    new_pe.custom_posting_time = frappe.utils.nowtime()
+
+    # Copy tax rows exactly — same VAT must be reversed
+    for tax in original.get('taxes', []):
+        new_pe.append('taxes', {
+            'account_head': tax.account_head,
+            'charge_type': tax.charge_type,
+            'rate': tax.rate,
+            'tax_amount': tax.tax_amount,
+            'add_deduct_tax': tax.add_deduct_tax,
+            'description': tax.description,
+            'included_in_paid_amount': tax.included_in_paid_amount,
+            'cost_center': tax.cost_center,
+        })
+
+    new_pe.insert(ignore_permissions=True)
+    return new_pe.name

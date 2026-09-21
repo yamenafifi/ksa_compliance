@@ -39,6 +39,10 @@ doctype_js = {
     'Payment Entry': 'public/js/payment_entry.js',
 }
 
+doctype_list_js = {
+    'Payment Entry': 'public/js/payment_entry_list.js'
+}
+
 # Svg Icons
 # ------------------
 # include app icons in desk

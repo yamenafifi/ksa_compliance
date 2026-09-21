@@ -759,6 +759,12 @@ class Einvoice:
         # --------------------------- START Invoice fields ------------------------------
         # --------------------------- START Invoice Basic info ------------------------------
         self.get_text_value(field_name='name', source_doc=self.sales_invoice_doc, xml_name='id', parent='invoice')
+        if self.sales_invoice_doc.doctype == 'Payment Entry':
+            invoice_id = (
+                self.sales_invoice_doc.custom_prepayment_invoice_number or self.sales_invoice_doc.name
+            )
+            self.result['invoice']['id'] = invoice_id
+
 
         self.get_text_value(field_name='uuid', source_doc=self.additional_fields_doc, xml_name='uuid', parent='invoice')
 

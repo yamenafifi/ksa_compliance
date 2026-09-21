@@ -58,6 +58,13 @@ def create_prepayment_invoice_additional_fields_doctype(self: PaymentEntry, meth
         logger.info(f'Skipping additional fields for {self.name} because ZATCA integration is disabled in settings')
         return
 
+    # Generate an invoice number from the same naming series as Sales Invoices
+    # so prepayment invoices share one continuous sequential stream with regular invoices
+    invoice_number = _generate_prepayment_invoice_number(self.company)
+    frappe.db.set_value('Payment Entry', self.name, 'custom_prepayment_invoice_number', invoice_number)
+    self.custom_prepayment_invoice_number = invoice_number
+    logger.info(f'Assigned prepayment invoice number {invoice_number} to {self.name}')
+
     prepayment_additional_fields_doc = SalesInvoiceAdditionalFields.create_for_invoice(self.name, self.doctype)
     is_live_sync = settings.is_live_sync
     prepayment_additional_fields_doc.insert()
@@ -68,6 +75,29 @@ def create_prepayment_invoice_additional_fields_doctype(self: PaymentEntry, meth
         frappe.utils.background_jobs.enqueue(
             _submit_additional_fields, doc=prepayment_additional_fields_doc, enqueue_after_commit=True
         )
+
+
+def _generate_prepayment_invoice_number(company: str) -> str:
+    from frappe.model.naming import make_autoname
+
+    # Get the naming series from the most recent Sales Invoice for this company
+    # so we share the exact same counter and sequence
+    naming_series = frappe.db.get_value(
+        'Sales Invoice',
+        {'company': company},
+        'naming_series',
+        order_by='creation desc',
+    )
+    if not naming_series:
+        fthrow(
+            ft(
+                'Cannot generate a prepayment invoice number: no Sales Invoices found for company $company '
+                'to determine the naming series. Please create at least one Sales Invoice first.',
+                company=company,
+            )
+        )
+    return make_autoname(naming_series)
+
 
 
 def _submit_additional_fields(doc: SalesInvoiceAdditionalFields):

@@ -124,30 +124,48 @@ def create_prepayment_invoice_additional_fields_doctype(self: PaymentEntry, meth
         logger.info(f'Skipping additional fields for {self.name} because ZATCA integration is disabled in settings')
         return
 
-    # Generate an invoice number from the same naming series as Sales Invoices so prepayment
-    # invoices and their credit notes share one continuous sequential stream with Sales Invoices.
-    invoice_number = _generate_prepayment_invoice_number(self.company)
+    # --- Invoice number assignment ---
+    # frappe.rename_doc() commits immediately (not transactional). If SIAF creation later
+    # fails and the outer transaction rolls back, the rename stays but the tabSeries counter
+    # is rolled back. On the next submit attempt make_autoname() would re-generate the same
+    # number — which now already exists. We handle this with two guards:
+    #
+    # Guard 1: if this PE already has a number assigned from a previous partial attempt, reuse
+    #          it so we never generate a duplicate.
+    # Guard 2: _generate_prepayment_invoice_number() skips any number that already exists as
+    #          a Payment Entry, keeping the series monotonically increasing.
+
+    # Guard 1 — reuse existing number if already assigned
+    existing_number = frappe.db.get_value('Payment Entry', self.name, 'custom_prepayment_invoice_number')
+    if existing_number:
+        invoice_number = existing_number
+        logger.info(f'Reusing previously assigned invoice number {invoice_number} for {self.name}')
+    else:
+        invoice_number = _generate_prepayment_invoice_number(self.company)
 
     # Rename the Payment Entry itself so that doc.name IS the invoice number.
-    # This ensures the ZATCA XML <ID>, all linked records, and the ERPNext document
-    # all carry the same human-readable invoice reference.
-    old_name = self.name
-    try:
-        frappe.rename_doc('Payment Entry', old_name, invoice_number, ignore_permissions=True, force=True)
-        self.name = invoice_number
-        logger.info(f'Renamed Payment Entry {old_name} → {invoice_number}')
-    except Exception as exc:
-        logger.error(f'Failed to rename Payment Entry {old_name} to {invoice_number}: {exc}')
-        fthrow(
-            msg=ft(
-                'Could not assign invoice number "$num" to this prepayment entry. '
-                'A document with that name may already exist. Please contact your administrator.',
-                num=invoice_number,
-            ),
-            title=ft('Naming Error'),
-        )
+    # Skip if already renamed (e.g. previous attempt committed the rename but failed on SIAF).
+    if self.name != invoice_number:
+        try:
+            frappe.rename_doc('Payment Entry', self.name, invoice_number, ignore_permissions=True, force=True)
+            self.name = invoice_number
+            logger.info(f'Renamed Payment Entry → {invoice_number}')
+        except Exception as exc:
+            logger.error(f'Failed to rename Payment Entry {self.name} to {invoice_number}: {exc}')
+            fthrow(
+                msg=ft(
+                    'Could not assign invoice number "$num" to this prepayment entry. '
+                    'Please contact your administrator. (Detail: $detail)',
+                    num=invoice_number,
+                    detail=str(exc),
+                ),
+                title=ft('Naming Error'),
+            )
+    else:
+        # PE was already renamed in a previous commit — just continue
+        logger.info(f'Payment Entry already named {invoice_number}, skipping rename')
 
-    # Also persist the invoice number in the dedicated display field
+    # Persist the invoice number in the display field
     frappe.db.set_value('Payment Entry', self.name, 'custom_prepayment_invoice_number', invoice_number)
     self.custom_prepayment_invoice_number = invoice_number
 
@@ -182,7 +200,26 @@ def _generate_prepayment_invoice_number(company: str) -> str:
                 company=company,
             )
         )
-    return make_autoname(naming_series)
+
+    # Guard 2 — skip any number that already exists as a Payment Entry.
+    # This handles the case where a previous rename committed but the tabSeries counter
+    # was rolled back, causing make_autoname() to re-generate an already-used number.
+    max_attempts = 20
+    for attempt in range(max_attempts):
+        invoice_number = make_autoname(naming_series)
+        if not frappe.db.exists('Payment Entry', invoice_number):
+            if attempt > 0:
+                logger.warning(f'Skipped {attempt} already-used number(s); assigned {invoice_number}')
+            return invoice_number
+        logger.warning(f'Invoice number {invoice_number} already exists as a Payment Entry — skipping')
+
+    fthrow(
+        ft(
+            'Could not generate a unique invoice number after $n attempts. '
+            'Please contact your administrator.',
+            n=max_attempts,
+        )
+    )
 
 
 def _submit_additional_fields(doc: SalesInvoiceAdditionalFields):

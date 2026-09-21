@@ -344,6 +344,8 @@ class SalesInvoiceAdditionalFields(Document):
 
     def _get_invoice_type_code(self, invoice_doc: SalesInvoice | POSInvoice | PaymentEntry) -> str:
         # POSInvoice doesn't have an is_debit_note field
+        if invoice_doc.doctype == 'Payment Entry' and invoice_doc.get('custom_is_prepayment_credit_note'):
+            return str(CREDIT_NOTE_CODE)
         if invoice_doc.doctype == 'Payment Entry' and invoice_doc.custom_prepayment_invoice:
             return str(PREPAYMENT_INVOICE_CODE)
         if invoice_doc.doctype == 'Sales Invoice' and invoice_doc.is_debit_note:

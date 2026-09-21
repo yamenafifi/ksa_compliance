@@ -837,6 +837,21 @@ class Einvoice:
 
             self.result['invoice']['billing_references'] = billing_references
 
+        # Prepayment credit note (381): reference the original prepayment invoice (386)
+        if (
+            self.sales_invoice_doc.doctype == 'Payment Entry'
+            and self.sales_invoice_doc.get('custom_is_prepayment_credit_note')
+        ):
+            original_pe_name = self.sales_invoice_doc.custom_original_prepayment_invoice
+            # Use the invoice number assigned at submit time (= the PE's own name after rename,
+            # stored also in custom_prepayment_invoice_number for display)
+            original_invoice_id = (
+                frappe.db.get_value('Payment Entry', original_pe_name, 'custom_prepayment_invoice_number')
+                or original_pe_name
+            )
+            self.result['invoice']['billing_references'] = [original_invoice_id]
+
+
         # FIXME: Contracting (contract ID)
         if self.sales_invoice_doc.get('contract_id'):
             self.get_text_value(

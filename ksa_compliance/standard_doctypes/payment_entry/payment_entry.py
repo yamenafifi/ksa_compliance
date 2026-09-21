@@ -147,7 +147,7 @@ def create_prepayment_invoice_additional_fields_doctype(self: PaymentEntry, meth
     # Skip if already renamed (e.g. previous attempt committed the rename but failed on SIAF).
     if self.name != invoice_number:
         try:
-            frappe.rename_doc('Payment Entry', self.name, invoice_number, ignore_permissions=True, force=True)
+            frappe.rename_doc('Payment Entry', self.name, invoice_number, force=True)
             self.name = invoice_number
             logger.info(f'Renamed Payment Entry → {invoice_number}')
         except Exception as exc:

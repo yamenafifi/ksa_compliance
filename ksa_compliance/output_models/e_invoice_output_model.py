@@ -92,7 +92,12 @@ class Einvoice:
             parent='invoice',
         )
 
-        if self.sales_invoice_doc.get('is_debit_note') or self.sales_invoice_doc.get('is_return'):
+        is_credit_debit_note = (
+            self.sales_invoice_doc.get('is_debit_note')
+            or self.sales_invoice_doc.get('is_return')
+            or (self.sales_invoice_doc.doctype == 'Payment Entry' and self.sales_invoice_doc.get('custom_is_prepayment_credit_note'))
+        )
+        if is_credit_debit_note:
             if self.sales_invoice_doc.doctype == 'Sales Invoice':
                 self.get_text_value(
                     field_name='custom_return_reason',
@@ -100,6 +105,9 @@ class Einvoice:
                     xml_name='instruction_note',
                     parent='invoice',
                 )
+            elif self.sales_invoice_doc.doctype == 'Payment Entry':
+                reason = self.sales_invoice_doc.get('remarks') or 'Prepayment Refund'
+                self.set_value('invoice', 'instruction_note', reason)
             else:
                 self.set_value('invoice', 'instruction_note', 'Return of goods')
 

@@ -6,6 +6,8 @@ frappe.listview_settings['Payment Entry'] = {
             return [__("Credit Note"), "orange", "status,=,Credit Note"];
         } else if (doc.status === "Refunded") {
             return [__("Refunded"), "green", "status,=,Refunded"];
+        } else if (doc.status === "Invoice") {
+            return [__("Invoice"), "blue", "status,=,Invoice"];
         } else if (doc.status === "Submitted") {
             return [__("Submitted"), "blue", "status,=,Submitted"];
         } else if (doc.status === "Cancelled") {

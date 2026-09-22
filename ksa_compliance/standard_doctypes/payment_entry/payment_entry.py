@@ -19,10 +19,14 @@ def validate_payment_entry(self: PaymentEntry, method: str = None):
     if not self.custom_prepayment_invoice:
         return
 
-    # Keep original status as Refunded if a credit note exists (protects against ERPNext set_status reverting it on save)
+    # A submitted prepayment invoice shows "Invoice", not the generic "Submitted" - unless it has
+    # since been refunded, in which case that takes over (protects against ERPNext's own set_status
+    # reverting either back to "Submitted" on save).
     if self.docstatus == 1 and not self.custom_is_prepayment_credit_note:
         if frappe.db.exists('Payment Entry', {'custom_original_prepayment_invoice': self.name, 'docstatus': 1}):
             self.status = 'Refunded'
+        else:
+            self.status = 'Invoice'
 
     # Set status to Credit Note if this is a credit note
     if self.docstatus == 1 and self.custom_is_prepayment_credit_note:
@@ -116,18 +120,28 @@ def _validate_prepayment_credit_note(self: PaymentEntry) -> None:
         )
 
 
-def _mark_credit_note_statuses(self: PaymentEntry) -> None:
-    """If this is a prepayment credit note, mark the original prepayment invoice as Refunded and the credit note itself
-    as Credit Note.
+def _set_prepayment_status_after_submit(self: PaymentEntry) -> None:
+    """What a prepayment's own `status` becomes the moment it is submitted - "Invoice" for an ordinary
+    prepayment, "Credit Note" for one that reverses another (which also marks the ORIGINAL "Refunded").
 
-    Deliberately not part of the ZATCA path below: these statuses record what happened to the money, which is true
-    whether or not ZATCA integration is enabled (or even configured) for the company, so they must never be skipped
-    by the early returns that follow.
+    Must run AFTER core's own `on_submit()` (called from our `on_submit` hook, never from `validate`):
+    `PaymentEntry.on_submit()` always ends with `self.set_status()`, which forces "Submitted" via a direct
+    `db_set` - so anything written earlier (e.g. in a `validate` hook) is overwritten by the time this runs.
+    Setting it back here, with our own `db_set`, is what actually sticks. `validate_payment_entry`'s own
+    in-memory assignment stays alongside this - it is what keeps the status correct across any LATER
+    save of an already-submitted entry, where `on_submit()` (and its `set_status()`) never runs again.
+
+    Deliberately not part of the ZATCA path below: these statuses record what happened to the money, which is
+    true whether or not ZATCA integration is enabled (or even configured) for the company, so they must never
+    be skipped by the early returns that follow.
     """
-    if self.custom_is_prepayment_credit_note and self.custom_original_prepayment_invoice:
-        frappe.db.set_value('Payment Entry', self.custom_original_prepayment_invoice, 'status', 'Refunded')
+    if self.custom_is_prepayment_credit_note:
+        if self.custom_original_prepayment_invoice:
+            frappe.db.set_value('Payment Entry', self.custom_original_prepayment_invoice, 'status', 'Refunded')
+            logger.info(f'Marked original prepayment invoice {self.custom_original_prepayment_invoice} as Refunded')
         frappe.db.set_value('Payment Entry', self.name, 'status', 'Credit Note')
-        logger.info(f'Marked original prepayment invoice {self.custom_original_prepayment_invoice} as Refunded')
+    else:
+        frappe.db.set_value('Payment Entry', self.name, 'status', 'Invoice')
 
 
 def create_prepayment_invoice_additional_fields_doctype(self: PaymentEntry, method: str = None):
@@ -135,7 +149,7 @@ def create_prepayment_invoice_additional_fields_doctype(self: PaymentEntry, meth
         logger.info(f"Skipping additional fields for {self.name} because it's not a prepayment invoice")
         return
 
-    _mark_credit_note_statuses(self)
+    _set_prepayment_status_after_submit(self)
 
     settings = ZATCABusinessSettings.for_invoice(self.name, self.doctype)
     if not settings:

@@ -850,6 +850,14 @@ class Einvoice:
             if additional_references:
                 billing_references.extend([ref.sales_invoice for ref in additional_references])
 
+            if not billing_references:
+                frappe.throw(
+                    frappe._('Credit/Debit notes must have a "Return Against" (original invoice) specified. '
+                             'Please open this credit note, set the "Return Against" field to the original '
+                             'Sales Invoice, and save before submitting to ZATCA. '
+                             '(ZATCA Rule BR-KSA-56: BT-25 Billing Reference ID is mandatory for invoice type 381/383)')
+                )
+
             self.result['invoice']['billing_references'] = billing_references
 
         # Prepayment credit note (381): reference the original prepayment invoice (386)

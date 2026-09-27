@@ -2,6 +2,8 @@ import frappe
 from dataclasses import asdict
 from datetime import timedelta
 
+from frappe.utils import flt
+
 from .models import DocumentReference, Item, InvoiceLine, TaxSubtotal, TaxTotal
 from ksa_compliance.standard_doctypes.tax_category import map_tax_category
 from erpnext.accounts.doctype.sales_invoice.sales_invoice import SalesInvoice
@@ -21,13 +23,31 @@ def invoice_line_create(doc: SalesInvoice) -> list[dict]:
     ]
 
 
+def prorated_tax_split(payment_entry, allocated_amount) -> tuple[float, float]:
+    """`payment_entry.paid_amount` is the NET amount (VAT excluded) and `total_taxes_and_charges` is
+    its own real VAT, stored positive - the prepayment invoice's VAT row is a real, correctly-signed
+    credit to the actual VAT account, never folded into `paid_amount` (see the EGC accounting app's
+    own `milestone_billing_adapter._flag_as_zatca_prepayment`). A single prepayment can be split
+    across several invoices via ERPNext's own "Get Advances", so the taxable/tax amount that belongs
+    on THIS invoice's own line is whatever fraction of the whole payment `allocated_amount` is - not
+    the payment's own full VAT every time, and never backed out of `allocated_amount` by dividing it
+    (that only works if `allocated_amount` is itself VAT-inclusive, which it is not here).
+    """
+    paid_amount = abs(flt(payment_entry.paid_amount))
+    taxable_amount = abs(flt(allocated_amount))
+    if not paid_amount:
+        return taxable_amount, 0.0
+    fraction = taxable_amount / paid_amount
+    tax_amount = abs(flt(payment_entry.total_taxes_and_charges)) * fraction
+    return taxable_amount, tax_amount
+
+
 def _create_invoice_line(advance: SalesInvoicePayment, doc: SalesInvoice) -> InvoiceLine:
     ref_doc = cast(PaymentEntry, frappe.get_cached_doc(advance.reference_type, advance.reference_name))
 
     tax_percent, tax_category_id = _get_tax_info(ref_doc)
     tax_category = map_tax_category(tax_category_id=tax_category_id)
-    taxable_amount = abs(advance.allocated_amount) / (1 + (tax_percent / 100))
-    tax_amount = abs(advance.allocated_amount) - taxable_amount
+    taxable_amount, tax_amount = prorated_tax_split(ref_doc, advance.allocated_amount)
     return InvoiceLine(
         idx=advance.idx
         + len(
@@ -47,7 +67,7 @@ def _create_invoice_line(advance: SalesInvoicePayment, doc: SalesInvoice) -> Inv
             rounding_amount=0.0,
             tax_subtotal=TaxSubtotal(
                 taxable_amount=taxable_amount,
-                tax_amount=abs(tax_amount),
+                tax_amount=tax_amount,
                 tax_category_id=tax_category.tax_category_code,
                 tax_percent=tax_percent,
             ),

@@ -691,12 +691,19 @@ class Einvoice:
         charge_type = doc.taxes[0].charge_type
         tax_percent = abs(doc.taxes[0].rate) / 100
         if charge_type == 'Actual':
-            values.amount_after_discount = doc.paid_amount - doc.total_taxes_and_charges
-            values.line_extension_amount = doc.paid_amount - doc.total_taxes_and_charges
-            values.amount = abs(self.sales_invoice_doc.received_amount_after_tax)
-            values.rounding_amount = doc.paid_amount
-            values.net_amount = abs(self.sales_invoice_doc.received_amount_after_tax)
-            values.tax_amount = abs(doc.total_taxes_and_charges)
+            # doc.paid_amount is the NET amount (VAT excluded) and doc.total_taxes_and_charges is
+            # the VAT, by this app's own design (see egc_accounting CLAUDE.md, "the prepayment's own
+            # VAT ledger fix") - read them directly rather than through received_amount_after_tax,
+            # whose formula only reconstructs the net figure under the OLD gross-paid_amount
+            # convention; under this one it reconstructs gross instead, doubling VAT into the base.
+            net_amount = abs(doc.paid_amount)
+            tax_amount = abs(doc.total_taxes_and_charges)
+            values.amount_after_discount = net_amount
+            values.line_extension_amount = net_amount
+            values.amount = net_amount
+            values.rounding_amount = net_amount + tax_amount
+            values.net_amount = net_amount
+            values.tax_amount = tax_amount
         else:
             sales_order_found = False
             for row in doc.references:
